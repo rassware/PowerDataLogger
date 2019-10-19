@@ -1,9 +1,9 @@
 #include <ESP8266WiFi.h>
 #include <Wire.h>
 #include <Adafruit_INA219.h>
+#include <time.h>
 #include <credentials.h>                                 // or define mySSID and myPASSWORD and THINGSPEAK_API_KEY
 
-#define LOG_PERIOD 60000                                 // Logging period in milliseconds
 #define THINKSPEAK_CHANNEL 879281
 
 // ThingSpeak settings
@@ -29,8 +29,6 @@ void setup() {
   // Or to use a lower 16V, 400mA range (higher precision on volts and amps):
   //ina219.setCalibration_16V_400mA();
 
-  Serial.println("Measuring voltage and current with INA219 ...");
-
   // Set WiFi to station mode and disconnect from an AP if it was Previously
   // connected
   WiFi.mode(WIFI_STA);
@@ -39,36 +37,51 @@ void setup() {
   while (WiFi.status() != WL_CONNECTED) {
     connectWifi();
   }
+
+  configTime(0, 0, "192.168.78.1", "pool.ntp.org");                             // Time server in Fritzbox
+  setenv("TZ", "CET-1CEST,M3.5.0,M10.5.0/3", 3);                                // timezone MEZ
+
+  while (!time(nullptr)) {                                                      // wait for time
+    Serial.print("Wait for time: ");
+    Serial.print(".");
+    delay(500);
+  }
+  Serial.println("time synced!");
+
+  time_t now = time(nullptr);
+  struct tm * timeinfo;
+  timeinfo = localtime(&now);
+  Serial.print("Actual time: ");
+  Serial.println(ctime(&now));
+
+  if (timeinfo->tm_hour >= 8 && timeinfo->tm_hour <= 20) {
+    Serial.println("Measuring voltage and current with INA219 ...");
+    float shuntvoltage = 0;
+    float busvoltage = 0;
+    float current_mA = 0;
+    float loadvoltage = 0;
+    float power_mW = 0;
+
+    shuntvoltage = ina219.getShuntVoltage_mV();
+    busvoltage = ina219.getBusVoltage_V();
+    current_mA = ina219.getCurrent_mA();
+    power_mW = ina219.getPower_mW();
+    loadvoltage = busvoltage + (shuntvoltage / 1000);
+
+    Serial.print("Bus Voltage:   "); Serial.print(busvoltage); Serial.println(" V");
+    Serial.print("Shunt Voltage: "); Serial.print(shuntvoltage); Serial.println(" mV");
+    Serial.print("Load Voltage:  "); Serial.print(loadvoltage); Serial.println(" V");
+    Serial.print("Current:       "); Serial.print(current_mA); Serial.println(" mA");
+    Serial.print("Power:         "); Serial.print(power_mW); Serial.println(" mW");
+
+    postThingspeak(shuntvoltage, busvoltage, current_mA, power_mW, loadvoltage);
+  }
+
+  ESP.deepSleep(3600e6);
 }
 
 void loop() {
-  unsigned long currentMillis = millis();
 
-  float shuntvoltage = 0;
-  float busvoltage = 0;
-  float current_mA = 0;
-  float loadvoltage = 0;
-  float power_mW = 0;
-
-  shuntvoltage = ina219.getShuntVoltage_mV();
-  busvoltage = ina219.getBusVoltage_V();
-  current_mA = ina219.getCurrent_mA();
-  power_mW = ina219.getPower_mW();
-  loadvoltage = busvoltage + (shuntvoltage / 1000);
-
-  Serial.print("Bus Voltage:   "); Serial.print(busvoltage); Serial.println(" V");
-  Serial.print("Shunt Voltage: "); Serial.print(shuntvoltage); Serial.println(" mV");
-  Serial.print("Load Voltage:  "); Serial.print(loadvoltage); Serial.println(" V");
-  Serial.print("Current:       "); Serial.print(current_mA); Serial.println(" mA");
-  Serial.print("Power:         "); Serial.print(power_mW); Serial.println(" mW");
-  Serial.println("");
-
-  delay(2000);
-
-  if (currentMillis - previousMillis > LOG_PERIOD) {
-    previousMillis = currentMillis;
-    postThingspeak(shuntvoltage, busvoltage, current_mA, power_mW, loadvoltage);
-  }
 }
 
 void connectWifi() {
